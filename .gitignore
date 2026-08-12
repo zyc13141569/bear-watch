@@ -1,0 +1,9 @@
+# 抓取缓存：只是网络失败时的回退副本，不需要进版本库
+data/cache/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.DS_Store

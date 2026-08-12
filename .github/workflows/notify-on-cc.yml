@@ -1,0 +1,57 @@
+name: CC 写入后发送周报
+
+# Claude（Cowork 定时任务）把解读 push 到 cc_brief.md 之后自动触发，
+# 组装 DS + CC 双段消息发到 Telegram。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cc_brief.md"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "忽略去重标记，强制重发本期"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bear-watch-write
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    # 防止本工作流自己的提交再次触发（paths 已限定 cc_brief.md，这里是双保险）
+    if: github.actor != 'bear-watch[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 发送 Telegram（DS + CC）
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPORT_URL: https://github.com/${{ github.repository }}/blob/main/REPORT.md
+        run: python run_notify.py ${{ inputs.force && '--force' || '' }}
+
+      - name: 提交更新后的 REPORT.md
+        run: |
+          git config user.name  "bear-watch[bot]"
+          git config user.email "bear-watch@users.noreply.github.com"
+          git add -A REPORT.md data/
+          if git diff --staged --quiet; then
+            echo "无变化"
+          else
+            git commit -m "📨 weekly report sent (DS+CC)"
+            git push
+          fi

@@ -1,0 +1,50 @@
+name: 兜底发送（CC 迟到时）
+
+# 如果周日采集完之后 Claude 的 cc_brief.md 迟迟没有 push 过来，
+# 这个工作流会在周日深夜把 DS 段先发出去，避免整周漏报。
+# run_notify.py 内部有去重标记，正常路径已发送过时这里会自动跳过。
+on:
+  schedule:
+    # 03:30 UTC 周一 = 多伦多夏令时 周日 23:30
+    - cron: "30 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bear-watch-write
+  cancel-in-progress: false
+
+jobs:
+  fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 兜底发送
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPORT_URL: https://github.com/${{ github.repository }}/blob/main/REPORT.md
+        run: python run_notify.py
+
+      - name: 提交
+        run: |
+          git config user.name  "bear-watch[bot]"
+          git config user.email "bear-watch@users.noreply.github.com"
+          git add -A REPORT.md data/
+          if git diff --staged --quiet; then
+            echo "无变化"
+          else
+            git commit -m "📨 fallback send"
+            git push
+          fi

@@ -1,0 +1,129 @@
+# ============================================================
+#  bear-watch 配置文件
+#  这里不放任何密钥。密钥全部走 GitHub Secrets / 环境变量。
+#  所有权重和阈值都可以改，改完下次运行立即生效。
+# ============================================================
+
+meta:
+  # 报告时区（只影响报告里显示的时间戳，不影响 cron）
+  timezone: "America/Toronto"
+  # "熊市"的定义：从最近 252 交易日高点回撤达到该幅度
+  bear_drawdown_threshold: 0.20
+  # 预测窗口
+  horizon_months: 3
+
+# 可用因子权重之和低于这个值时，直接报错而不是给出一个虚假的结论。
+# 宁可这一周没报告，也不要一份基于半截数据的报告。
+min_available_weight: 45
+
+# ------------------------------------------------------------
+# 因子权重（总和必须 = 100）
+# 设计原则：慢变量（估值）权重低，快变量（趋势/信用）权重高。
+# 估值只能告诉你"跌下来会跌多深"，趋势和信用才告诉你"什么时候跌"。
+# ------------------------------------------------------------
+weights:
+  valuation:    12    # 估值：CAPE / 席勒市盈率所处历史分位
+  trend:        18    # 趋势：200日线、50/200金叉死叉、距52周高点回撤
+  credit:       16    # 信用：ICE BofA 高收益债期权调整利差 水平 + 变化
+  curve:        10    # 收益率曲线：10y-3m 当前值 + 过去24个月最深倒挂（滞后效应）
+  volatility:   10    # 波动率：VIX 水平 + 20日变化
+  labor:        12    # 就业：Sahm 规则 + 非农 3 个月均值
+  policy:        8    # 货币政策：实际联邦基金利率 + 通胀缺口 + 政策方向
+  breadth:       6    # 市场宽度：等权重 vs 市值加权（RSP/SPY）相对强弱
+  commodity:     5    # 大宗冲击：原油 3 个月变化（输入型通胀 → 被迫紧缩）
+  seasonality:   3    # 季节性：月份效应 + 总统周期（中期选举年加权）
+
+# ------------------------------------------------------------
+# 概率映射：logit(p) = slope * (score - 50) + intercept
+# 校准锚点：score 50 → 8%，score 75 → 25%，score 90 → 45%
+# 8% 大致等于 1950 年以来任意一个季度"开启一轮 -20% 熊市"的无条件基准概率
+# ------------------------------------------------------------
+probability_map:
+  slope: 0.056
+  intercept: -2.442
+  floor: 0.01
+  ceiling: 0.85
+
+# ------------------------------------------------------------
+# 告警阈值（"高阈值"模式：平时完全静音）
+# 任一条满足即触发即时推送，且同一条 cooldown_days 内不重复推送
+# ------------------------------------------------------------
+alerts:
+  cooldown_days: 5
+  rules:
+    - id: prob_jump
+      desc: "熊市概率相对上周跳升超过 15 个百分点"
+      type: prob_delta_pp
+      threshold: 15
+    - id: prob_level
+      desc: "熊市概率绝对水平首次突破 40%"
+      type: prob_level
+      threshold: 0.40
+    - id: drawdown_10
+      desc: "S&P 500 距 52 周高点回撤突破 10%"
+      type: drawdown
+      threshold: 0.10
+    - id: vix_30
+      desc: "VIX 收盘突破 30"
+      type: vix_level
+      threshold: 30
+    - id: hy_spread_blowout
+      desc: "高收益债利差 20 个交易日内走扩超过 100bp"
+      type: hy_oas_delta_bp
+      threshold: 100
+    - id: fragile_and_firing
+      desc: "结构脆弱度与触发压力同时高位 —— 历史上熊市正是从这个配置开始"
+      type: fragile_and_firing
+      fragility_min: 62
+      trigger_min: 55
+    - id: death_cross
+      desc: "S&P 500 50 日均线下穿 200 日均线（死叉）"
+      type: death_cross
+    - id: bear_confirmed
+      desc: "S&P 500 已确认进入熊市（回撤 ≥20%）"
+      type: drawdown
+      threshold: 0.20
+
+# ------------------------------------------------------------
+# LLM 设置
+# ------------------------------------------------------------
+llm:
+  deepseek:
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"        # 想更强的推理可改 deepseek-reasoner
+    temperature: 0.3
+    max_tokens: 1100
+    timeout: 180
+  # CC（Claude）段落由 Cowork 定时任务写入仓库的 cc_brief.md，
+  # 这里配置的是"多久没更新就算过期"
+  cc_brief_max_age_hours: 60
+
+# ------------------------------------------------------------
+# 数据源（全部免费、无需密钥）
+# ------------------------------------------------------------
+sources:
+  stooq:
+    base: "https://stooq.com/q/d/l/"
+    symbols:
+      spx:   "^spx"      # S&P 500
+      ndx:   "^ndx"      # Nasdaq 100
+      vix:   "^vix"      # VIX
+      spy:   "spy.us"
+      qqq:   "qqq.us"
+      rsp:   "rsp.us"    # 等权重 S&P 500（算市场宽度）
+      brent: "cb.f"      # 布伦特原油连续合约
+  fred:
+    base: "https://fred.stlouisfed.org/graph/fredgraph.csv"
+    series:
+      hy_oas:    "BAMLH0A0HYM2"   # ICE BofA 美国高收益债 OAS
+      t10y3m:    "T10Y3M"         # 10年 - 3个月
+      t10y2y:    "T10Y2Y"         # 10年 - 2年
+      dgs10:     "DGS10"
+      unrate:    "UNRATE"         # 失业率（月度）
+      payems:    "PAYEMS"         # 非农就业总人数（月度）
+      cpi:       "CPIAUCSL"       # CPI
+      corecpi:   "CPILFESL"       # 核心 CPI
+      fedfunds:  "DFF"            # 有效联邦基金利率
+  # 网络失败时的重试
+  retries: 4
+  backoff_seconds: 3
